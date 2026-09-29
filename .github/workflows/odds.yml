@@ -1,0 +1,43 @@
+name: Odds poll
+# GitHub runs "every 15 minutes" schedules late or not at all on small repos, so each run also queues the next one
+# about 15 minutes after it started (a self-renewing chain). The schedule below only restarts the chain if it ever stops.
+# To pause polling: Settings > Secrets and variables > Actions > Variables > add ODDS_CHAIN = off.
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch: {}
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: odds-poll
+  cancel-in-progress: false
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - run: echo "START=$(date +%s)" >> $GITHUB_ENV
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: Poll The Odds API (opening + current lines)
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: python pull_odds.py
+      - name: Publish to the "odds" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view odds >/dev/null 2>&1 || gh release create odds --title "Odds" --notes "Opening and current lines, refreshed every 15 minutes. Files are replaced on every run."
+          gh release upload odds out/* --clobber
+      - name: Queue the next poll (about 15 minutes after this one started)
+        if: ${{ always() && vars.ODDS_CHAIN != 'off' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          left=$(( 900 - ( $(date +%s) - START ) ))
+          if [ $left -gt 0 ]; then sleep $left; fi
+          gh workflow run odds.yml --ref main
