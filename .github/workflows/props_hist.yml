@@ -1,13 +1,21 @@
 name: Props history
-# One-off (rerunnable) pull of historical NFL player-prop lines for the props backtest. Run it from the Actions tab.
+# Resumable pull of historical NFL player-prop lines for the props backtest (pull_props_hist.py). Each run saves its progress to the
+# "props-hist" release (props_state.json + props_<season>.csv.gz); the next run continues from there and the workflow re-queues itself
+# until the script reports complete (or the credit floor). The Tuesday schedule restarts the chain each week to add the newly finished games.
 on:
+  schedule:
+    - cron: "23 13 * 9-12,1,2 2"
   workflow_dispatch: {}
 permissions:
   contents: write
+  actions: write
+concurrency:
+  group: props-hist
+  cancel-in-progress: false
 jobs:
   pull:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,11 +26,20 @@ jobs:
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
         run: python pull_props_hist.py
-      - name: Publish to the "props" release
-        if: always()
+      - name: Publish to the "props-hist" release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          [ -f out/props_hist.json.gz ] || exit 0
-          gh release view props >/dev/null 2>&1 || gh release create props --title "Props" --notes "Historical NFL player-prop lines (props_hist.json.gz). Replaced on every run."
-          gh release upload props out/props_hist.json.gz --clobber
+          [ -f out/props_state.json ] || { echo "no props_state.json written - nothing to publish"; exit 1; }
+          gh release view props-hist >/dev/null 2>&1 || gh release create props-hist --title "Props history" --notes "Historical NFL player-prop lines (props_<season>.csv.gz) and pull progress (props_state.json). Replaced on every run."
+          gh release upload props-hist out/props_state.json out/props_*.csv.gz --clobber
+          ls -l out/
+      - name: Queue the next run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f out/COMPLETE ]; then echo "finished: $(cat out/COMPLETE)"; exit 0; fi
+          n=$(python -c "import json;print(json.load(open('out/props_state.json'))['progress']['this_run']['snapshots'])")
+          if [ "$n" -eq 0 ]; then echo "pulled 0 snapshots - not re-queuing"; exit 0; fi
+          gh workflow run props_hist.yml --ref "${{ github.ref_name }}"
+          echo "pulled $n snapshots - queued the next run"

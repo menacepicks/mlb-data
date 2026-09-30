@@ -1,6 +1,9 @@
 name: Game line history
-# One-off (rerunnable, resumable) pull of historical NFL game lines: openers, line path, closes. Run it from the Actions tab.
+# Resumable pull of historical game lines (openers, line path every 4 hours, closes) - pull_game_hist.py. Already-pulled snapshots are
+# skipped, so the weekly schedule only adds the newest week (about 1,000 credits a week for the NFL).
 on:
+  schedule:
+    - cron: "41 12 * 9-12,1,2 2"
   workflow_dispatch:
     inputs:
       sports:
@@ -21,7 +24,7 @@ jobs:
       - name: Pull historical game lines (The Odds API)
         env:
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          SPORTS: ${{ github.event.inputs.sports }}
+          SPORTS: ${{ github.event.inputs.sports || 'americanfootball_nfl' }}
         run: python pull_game_hist.py
       - name: Publish to the "gamehist" release
         if: always()
