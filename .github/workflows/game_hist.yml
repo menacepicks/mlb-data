@@ -1,0 +1,33 @@
+name: Game line history
+# One-off (rerunnable, resumable) pull of historical NFL game lines: openers, line path, closes. Run it from the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      sports:
+        description: "Sports (comma separated)"
+        default: "americanfootball_nfl"
+permissions:
+  contents: write
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: Pull historical game lines (The Odds API)
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          SPORTS: ${{ github.event.inputs.sports }}
+        run: python pull_game_hist.py
+      - name: Publish to the "gamehist" release
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls out/game_hist_*.json.gz >/dev/null 2>&1 || exit 0
+          gh release view gamehist >/dev/null 2>&1 || gh release create gamehist --title "Game line history" --notes "Historical game lines (game_hist_<sport>.json.gz). Replaced on every run."
+          gh release upload gamehist out/game_hist_*.json.gz --clobber
